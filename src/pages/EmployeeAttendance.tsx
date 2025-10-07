@@ -177,6 +177,26 @@ export default function EmployeeAttendance() {
     }
 
     try {
+      showToast.success("Uploading photo to Cloudinary...");
+
+      // Upload image to Cloudinary via edge function
+      const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
+        'upload-to-cloudinary',
+        {
+          body: {
+            image: capturedImage,
+            folder: 'employee-attendance',
+          },
+        }
+      );
+
+      if (uploadError || !uploadData?.success) {
+        throw new Error(uploadData?.error || 'Failed to upload image to Cloudinary');
+      }
+
+      const cloudinaryUrl = uploadData.url;
+
+      // Store attendance record with Cloudinary URL
       const { error } = await supabase
         .from('attendance_records')
         .insert({
@@ -184,7 +204,7 @@ export default function EmployeeAttendance() {
           employee_username: username,
           type: attendanceType,
           timestamp: new Date().toISOString(),
-          photo: capturedImage,
+          photo: cloudinaryUrl,
           location: location || 'Location unavailable',
           date: getTodayDateString(),
         });
