@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Camera, Clock, CheckCircle, X, History, UserCheck, MapPin } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { PastAttendance } from "@/components/PastAttendance";
+import { supabase } from "@/integrations/supabase/client";
 
 interface AttendanceRecord {
   type: 'check-in' | 'check-out';
@@ -25,9 +26,50 @@ export function AttendanceCapture({ onComplete, onClose }: AttendanceCaptureProp
   const [attendanceType, setAttendanceType] = useState<'check-in' | 'check-out'>('check-in');
   const [location, setLocation] = useState<string>('');
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [hasCheckedIn, setHasCheckedIn] = useState(false);
+  const [hasCheckedOut, setHasCheckedOut] = useState(false);
+  const [isCheckingAttendance, setIsCheckingAttendance] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  const checkTodayAttendance = useCallback(async () => {
+    setIsCheckingAttendance(true);
+    try {
+      const employeeUsername = localStorage.getItem('employeeUsername');
+      if (!employeeUsername) {
+        showToast.error("Employee username not found");
+        return;
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await supabase
+        .from('attendance_records')
+        .select('type')
+        .eq('employee_username', employeeUsername)
+        .eq('date', today);
+
+      if (error) {
+        console.error('Error checking attendance:', error);
+        return;
+      }
+
+      const checkedIn = data?.some(record => record.type === 'check-in') || false;
+      const checkedOut = data?.some(record => record.type === 'check-out') || false;
+      
+      setHasCheckedIn(checkedIn);
+      setHasCheckedOut(checkedOut);
+    } catch (error) {
+      console.error('Error checking attendance:', error);
+    } finally {
+      setIsCheckingAttendance(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkTodayAttendance();
+  }, [checkTodayAttendance]);
 
   const getLocation = useCallback(async (): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -55,6 +97,16 @@ export function AttendanceCapture({ onComplete, onClose }: AttendanceCaptureProp
   }, []);
 
   const startCamera = useCallback(async () => {
+    // Check if already marked attendance for this type today
+    if (attendanceType === 'check-in' && hasCheckedIn) {
+      showToast.error("You have already checked in today");
+      return;
+    }
+    if (attendanceType === 'check-out' && hasCheckedOut) {
+      showToast.error("You have already checked out today");
+      return;
+    }
+
     try {
       setIsCapturing(true);
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -75,7 +127,7 @@ export function AttendanceCapture({ onComplete, onClose }: AttendanceCaptureProp
       showToast.error("Camera access denied. Please allow camera permissions.");
       setIsCapturing(false);
     }
-  }, []);
+  }, [attendanceType, hasCheckedIn, hasCheckedOut]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -244,16 +296,26 @@ Location: Lat ${lat}, Lng ${lng}` : ''}`;
                   <CardContent className="p-6">
                     {!capturedImage ? (
                       <div className="space-y-4">
-                        {!isCapturing ? (
+                         {!isCapturing ? (
                           <div className="text-center">
                             <Camera className="h-16 w-16 mx-auto text-slate-400 mb-4" />
                             <p className="text-slate-600 mb-4">
                               Start your camera to capture attendance photo
                             </p>
-                            <Button onClick={startCamera} className="bg-employee-legal hover:bg-employee-legal-hover">
+                            <Button 
+                              onClick={startCamera} 
+                              disabled={isCheckingAttendance || (attendanceType === 'check-in' && hasCheckedIn) || (attendanceType === 'check-out' && hasCheckedOut)}
+                              className="bg-employee-legal hover:bg-employee-legal-hover"
+                            >
                               <Camera className="h-4 w-4 mr-2" />
-                              Start Camera
+                              {isCheckingAttendance ? 'Loading...' : 'Start Camera'}
                             </Button>
+                            {attendanceType === 'check-in' && hasCheckedIn && (
+                              <p className="text-sm text-red-600 mt-2">You have already checked in today</p>
+                            )}
+                            {attendanceType === 'check-out' && hasCheckedOut && (
+                              <p className="text-sm text-red-600 mt-2">You have already checked out today</p>
+                            )}
                           </div>
                         ) : (
                           <div className="space-y-4">
